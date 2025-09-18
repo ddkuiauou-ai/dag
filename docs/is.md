@@ -2,143 +2,141 @@
 
 ## 1. 개요 (Overview)
 
-Isshoo는 다양한 한국 커뮤니티 사이트(클리앙, 뽐뿌, FM코리아 등)의 인기 게시물을 신속하게 수집 및 집계하여 공정하고 즉시성 있는 이슈 큐레이션을 제공하는 데이터 파이프라인 및 서비스입니다. (서비스 URL: [https://www.isshoo.xyz](https://www.isshoo.xyz))
-
-본 문서는 Isshoo 프로젝트의 아키텍처, 데이터 파이프라인, 크롤러 구현 현황, 그리고 향후 로드맵을 종합적으로 다루는 단일 소스 진실(Single Source of Truth) 문서입니다.
+Isshoo는 국내 커뮤니티(클리앙, 뽐뿌, FM코리아, 다모앙 등)의 인기 게시글을 초 단위에 가깝게 수집하고, 랭킹·클러스터·키워드 트렌드를 계산하여 Isshoo 웹 서비스([https://www.isshoo.xyz](https://www.isshoo.xyz))에 제공합니다. 본 문서는 Dagster 파이프라인, 크롤러, AI 후처리, 모니터링 설정을 포함한 최신 코드베이스의 싱글 소스 문서입니다.
 
 ## 2. 아키텍처 (Architecture)
 
-### 2.1. 데이터 흐름
-
-Isshoo의 전체 데이터 흐름은 다음과 같습니다.
+### 2.1 데이터 흐름
 
 ```
-[Crawlers] --(JSON)--> [File Sensor] --(Dagster Asset)--> [Database] --> [API/Web]
+[Crawlee 기반 Crawlers] --(JSON)--> [output_data 디렉터리]
+    \--(is_output_data_sensor)--> [is_ingest_job]
+        \--(posts_asset 및 하위 자산)--> [PostgreSQL]
+            \--(post_snapshots/post_signatures 등)--> [골드/AI 자산]
+                \--(Materialized Views & API)
 ```
 
-1.  **Crawlers**: `Crawlee`와 `Playwright`를 사용하여 각 커뮤니티 사이트의 데이터를 수집하고, 표준화된 JSON 파일로 출력합니다.
-2.  **File Sensor**: 지정된 디렉터리를 모니터링하여 새로운 JSON 파일 생성을 감지하고, Dagster 파이프라인 실행을 트리거합니다.
-3.  **Dagster Assets**: 감지된 파일을 처리하여 데이터베이스(PostgreSQL)에 게시물, 댓글, 이미지, 트렌드 등 정제된 데이터를 저장하고 집계합니다.
-4.  **API/Web**: 데이터베이스의 정보를 기반으로 사용자에게 랭킹, 최신 글, 키워드 트렌드 등을 제공합니다.
+- **크롤러**: TypeScript + Crawlee/Playwright 조합으로 각 커뮤니티의 리스트/상세 페이지를 순회하고 표준 JSON을 생성합니다.
+- **파일 센서**: `output_data/*.json`을 감시하여 신규·수정 파일이 감지되면 Dagster `is_ingest_job`을 실행합니다.
+- **Dagster 자산**: `is_data_sync.py`(동기, 실버 계층) → `is_data_unsync.py`/`is_data_cluster.py`/`is_data_llm.py`/`is_data_vlm.py`(비동기, 골드·AI 계층) 순으로 파생 데이터를 적재합니다.
+- **API/Web**: PostgreSQL 테이블과 머티리얼라이즈드 뷰(`mv_post_trends_*`, `cluster_trends`, `keyword_trends`)를 조회하여 랭킹, 트렌드, 클러스터 결과를 제공합니다.
 
-### 2.2. 프로젝트 구조
+### 2.2 프로젝트 구조
 
--   **Dagster 파이프라인 (`/dag/dag/`)**:
-    -   `is_*.py`: 데이터 수집, 변환, 집계, 랭킹 로직을 포함하는 핵심 Dagster asset들이 정의되어 있습니다.
-    -   `is_data_sql.sql`: 참조용 DDL 및 쿼리를 포함합니다.
--   **Crawlers (`/dag/dag/is_crawlee/`)**: 각 커뮤니티 사이트별로 **독립된 TypeScript 기반 Crawlee 프로젝트**가 각각의 하위 디렉터리(`clien-park/`, `fmkorea/` 등)에 위치합니다. 각 프로젝트는 자체 `package.json`과 `src/` 디렉터리를 가집니다.
+- **Dagster 파이프라인 (`/dag/dag/`)**
+  - `definitions.py`: 자산/체크/잡/스케줄/센서를 종합 등록하고 Freshness 센서를 구성합니다.
+  - `is_data_sync.py`: JSON → 관계형 테이블 정규화(Posts/Comments/Images/Embeds/Snapshots/Signatures).
+  - `is_data_unsync.py`: 트렌드, 키워드, 큐 승격 등 비동기 골드 계층 자산.
+  - `is_data_cluster.py`: 유사도 기반 클러스터링, 병합, 회전(rank) 로직.
+  - `is_data_llm.py` & `is_data_vlm.py`: 텍스트/이미지 LLM 워커 및 인큐 자산.
+  - `is_node.py`: Crawlee TypeScript 빌드/실행 자산과 동적 스케줄.
+  - `is_sensor_output_data.py`: 파일 센서.
+- **크롤러 (`/dag/dag/is_crawlee/`)**: 사이트별 Crawlee 프로젝트(`clien-park`, `ppomppu-hot`, `fmkorea`, `damoang`). 각 폴더는 독립 `package.json` + `src/` 구조를 가집니다.
 
-## 3. 데이터 파이프라인 (Dagster Assets)
+## 3. Dagster 파이프라인 (Dagster Assets)
 
-프로젝트 초기 설계 내용을 기반으로, 현재 코드 구현 상태를 반영하여 파이프라인을 기술합니다.
-
-### 3.1. 핵심 자산 (Assets) 및 의존성
+### 3.1 브론즈/실버 계층 – 동기 자산 (`is_data_sync.py`)
 
 ```
-[File Sensor] -> posts_asset
- ├─ post_versions_asset
- ├─ post_images_asset
- ├─ post_embeds_asset
- ├─ post_comments_asset
- ├─ post_signatures_asset
- ├─ post_keywords_asset
- └─ post_categorize_asset
-
-post_snapshots_asset -> post_trends_asset
-
-post_signatures_asset -> clusters_build_asset
-clusters_merge_asset
-
-post_trends_asset + clusters_build_asset -> cluster_rotation_asset
-keyword_trends_asset
+is_output_data_sensor → is_ingest_job
+  └─ posts_asset (EAGER)
+       ├─ post_versions_asset
+       ├─ post_comments_asset
+       ├─ post_images_asset
+       ├─ post_embeds_asset
+       ├─ post_snapshots_asset
+       ├─ sites_asset
+       └─ post_signatures_asset
 ```
 
--   **`posts_asset`**: 크롤러가 생성한 JSON 파일을 읽어 초기 데이터를 적재하는 핵심 자산입니다. (구현 완료)
--   **`post_trends_asset`**: 게시물의 조회수, 댓글, 추천수 변화량을 집계하여 트렌드를 분석합니다. (구현 완료)
--   **`clusters_build_asset`**: 텍스트/이미지 유사도를 기반으로 중복 및 재업로드 게시물을 클러스터링합니다. (구현 중)
--   **`cluster_rotation_asset`**: 클러스터의 랭킹 및 노출을 관리합니다. (구현 계획)
--   **`keyword_trends_asset`**: 인기 키워드를 집계합니다. (구현 계획)
+- **posts_asset**: 수집 JSON을 읽어 `posts` 테이블에 멱등 upsert. 변경 여부를 판단하고 텍스트 해시(`text_rev`)를 관리합니다.
+- **post_versions_asset**: 제목/본문/태그 변동 시 버전 스냅샷을 기록합니다.
+- **post_comments_asset**: 중첩 댓글을 DFS로 평탄화하여 `post_comments`에 일괄 upsert하고, 중복/깊이 히스토그램을 로깅합니다.
+- **post_images_asset**: URL 해시 기반으로 이미지 메타를 upsert하며 신규 이미지를 `media_enrichment_jobs` 큐에 배치 등록합니다.
+- **post_embeds_asset**: 임베드/동영상/링크를 upsert하고 이미지형 임베드에 대한 VLM 큐잉을 수행합니다.
+- **post_snapshots_asset**: 조회·댓글·추천 카운트를 시간 스냅샷으로 적재하여 후속 트렌드 계산의 기본 재료를 제공합니다.
+- **sites_asset**: 사이트·게시판별 마지막 크롤 시각을 갱신합니다.
+- **post_signatures_asset**: SimHash/MinHash 기반 텍스트·갤러리·임베드 시그니처를 계산해 `post_signatures`에 저장합니다.
 
-### 3.2. 실행 주기 및 자동화 (Automation)
+### 3.2 골드 계층 및 운영 자산 (`is_data_unsync.py`, `is_data_cluster.py`)
 
--   **파일 센서**: `is_sensor_output_data.py`에 구현되어 있으며, 새로운 크롤러 결과 파일(`.json`)을 감지하여 `is_ingest_job`을 실행합니다. (구현 완료)
--   **자동화 조건 (AutomationCondition)**: 계획된 `EAGER`, `ON_CRON` 기반의 조건부 실행은 현재 코드에 **적용되지 않았습니다.** 현재는 파일 센서에 의한 단일 파이프라인 실행만 구성되어 있습니다.
--   **Freshness Checks**: 계획된 모니터링 기능은 현재 코드에 **구현되지 않았습니다.**
+```
+post_snapshots_asset ─┬─> post_trends_asset (ON10)
+                       ├─> refresh_mv_post_trends_30m (ON10)
+                       └─> refresh_mv_post_trends_agg (ON10)
 
-## 4. 크롤러 (Crawlers)
+post_trends_asset ─┬─> cluster_rotation_asset (ON10 & BLOCKS_OK)
+                    └─> clusters_build_asset (ON30)
 
-`dag/dag/is_crawlee` 디렉터리의 소스 코드를 분석하여 크롤러 현황을 기술합니다.
+post_signatures_asset ──> clusters_build_asset ──> clusters_merge_asset (ON1H)
 
-### 4.1. 지원 사이트 현황
+posts_asset ─┬─> keyword_trends_asset (ON10)
+             └─> text_only_enqueue_asset (ON2)
 
-| 사이트 | 상태 | 대상 게시판 | 코드 경로 | 비고 |
+cluster_rotation_asset ──> promote_p0_from_frontpage_asset (ON2)
+```
+
+- **post_trends_asset**: 최근 30분 윈도우에서 조회/댓글/추천 증감을 계산하고 `hot_score=views+3*comments+2*likes`를 저장합니다.
+- **refresh_mv_post_trends_30m / _agg**: 실시간/집계 머티리얼라이즈드 뷰를 10분 주기로 `REFRESH MATERIALIZED VIEW CONCURRENTLY` 합니다.
+- **clusters_build_asset**: 72시간 내 게시글을 대상으로 SimHash+MinHash LSH → 후보 생성 → 조건부 유사도 검증으로 클러스터를 구성하고 대표글을 선정합니다.
+- **clusters_merge_asset**: 14일 내 생성된 중복 클러스터를 top-k 멤버 교차 비교로 병합합니다.
+- **cluster_rotation_asset**: 클러스터 hot_score를 백분위 정규화 후 τ=48h 시간 감쇠, 3회 연속 노출 시 24h 쿨다운을 적용하여 랭킹을 기록합니다.
+- **keyword_trends_asset**: `post_enrichment` 키워드를 3h/6h/24h/1w 윈도우로 집계하여 `keyword_trends`에 upsert합니다.
+- **promote_p0_from_frontpage_asset**: 최근 프론트 노출 글의 LLM/VLM 잡을 P0 우선순위로 승격하고, 필요 시 이미지 잡을 신규 생성합니다.
+- **text_only_enqueue_asset**: 이미지 ETA를 추정하여 이미지가 없는 글은 즉시, 이미지가 있는 글은 상황에 따라 홀드 또는 즉시 LLM 큐에 넣습니다.
+
+### 3.3 AI Enrichment 파이프라인 (`is_data_llm.py`, `is_data_vlm.py`)
+
+- **fusion_worker_asset (ON10)**: `fusion_jobs` 큐를 소비하여 텍스트·이미지 블록을 통합한 LLM 프롬프트를 호출하고 카테고리/키워드를 `post_enrichment`에 저장합니다.
+- **fusion_backfill_enqueue_asset**: 프롬프트 버전 변경 시 텍스트/이미지 리비전을 기준으로 대량 재큐잉합니다.
+- **vlm_worker_asset (ON3)**: `media_enrichment_jobs` 큐를 SKIP LOCKED로 가져와 이미지 캡션/OCR/객체/색상/안전성 분석을 수행하고 `post_image_enrichment`에 저장합니다.
+- 두 워커는 성공/실패 건수를 Dagster 메타데이터로 노출하고, 실패 시 `dagster.Failure`를 발생시켜 재시도 제어가 가능합니다.
+
+## 4. 자동화 및 모니터링
+
+- **센서**: `is_output_data_sensor`는 30초 간격으로 `output_data`를 감시해 JSON 변경 시 `is_ingest_job`을 트리거합니다.
+- **AutomationCondition**: `schedules.py`에 정의된 `EAGER`, `ON2`, `ON10`, `ON30`, `ON1H` 등 크론 기반 조건을 자산에 직접 부여하여 파이프라인을 선언적 cadence로 운영합니다.
+- **스케줄/잡**:
+  - `is_crawler_schedule_10min`: 10분마다 Crawlee 실행(`is_crawler_executor`).
+  - `is_crawler_executor_interval_schedule`: 30분~48시간 간격의 백필 잡을 동적 매핑으로 실행합니다.
+  - `is_ingest_job`: `posts_asset` 이하 전체 자산을 한 번에 재실행하는 기본 잡.
+- **Freshness Checks**: `definitions.py`에서 `post_trends_asset`, `cluster_rotation_asset`, `keyword_trends_asset`에 대해 10분 SLA 모니터링을 생성하고, `freshness_checks_sensor`로 감시합니다.
+
+## 5. 크롤러 (Crawlers)
+
+| 사이트 | 상태 | 대상 게시판 | 코드 경로 | 주요 특징 |
 | --- | --- | --- | --- | --- |
-| `clien` | ✅ 정상 작동 | 모두의공원 (`park`) | `clien-park` | `po` 파라미터 기반 페이지네이션 |
-| `ppomppu` | ✅ 정상 작동 | 핫게 (`hot`) | `ppomppu-hot` | EUC-KR 인코딩 처리, AJAX 댓글 |
-| `fmkorea` | ✅ 정상 작동 | 베스트 (`best`) | `fmkorea` | `camoufox-js` 사용, AJAX 댓글 |
-| `damoang` | ✅ 정상 작동 | 자유게시판 (`free`) | `damoang` | 표준 리스트-상세 구조 |
-| `theqoo` | ❌ 지원 중단 | - | - | 과거 지원이 계획되었으나 현재 관련 코드가 존재하지 않습니다. |
+| `clien` | ✅ 운영 중 | 모두의공원 (`park`) | `clien-park` | `po` 파라미터 페이지네이션, 댓글 depth 파싱, TypeScript Crawlee |
+| `ppomppu` | ✅ 운영 중 | 핫게 (`hot.php`) | `ppomppu-hot` | EUC-KR 응답 → `iconv-lite` UTF-8 변환, AJAX 댓글 수집 |
+| `fmkorea` | ✅ 운영 중 | 베스트 (`/best`) | `fmkorea` | `camoufox-js`로 브라우저 우회, 댓글 페이지네이션 대응 |
+| `damoang` | ✅ 운영 중 | 자유게시판 (`/free`) | `damoang` | 삭제 게시물 스킵, 표준 리스트/상세 구조 |
+| `theqoo` | ❌ 미구현 | - | - | 계획만 존재하며 코드 없음 |
 
-### 4.2. 크롤러별 특징
+- `is_crawler_build` 자산이 TypeScript 프로젝트를 `npm install && npm run build`로 미리 빌드합니다.
+- `is_crawler_executor` 자산은 빌드된 JS(`dist/main.js`)를 순차 실행하며, 로그에서 요청/성공/실패/수집 건수를 추출해 메타데이터로 기록합니다.
+- 로그 후처리: ANSI 코드 제거, `Final request statistics`/`상세 페이지 처리` 문자열 기반 통계를 수집하고, 임베디드 MIME 타입 빈도를 계산합니다.
 
--   **`clien-park`**:
-    -   대상: 클리앙 모두의공원 (`/service/board/park`)
-    -   특징: `data-board-sn` 속성을 `postId`로 사용하며, 페이지네이션은 `po` 쿼리 파라미터를 직접 증가시키는 방식으로 처리합니다. 댓글은 깊이(depth)를 클래스명(`reN`)과 `margin-left` 스타일로 추정하여 트리 구조를 만듭니다.
--   **`damoang`**:
-    -   대상: 다모앙 자유게시판 (`/free`)
-    -   특징: 표준적인 리스트-상세 구조를 가집니다. `skipDeleted` 규칙을 사용하여 "삭제된 게시물" 텍스트가 포함된 항목을 목록에서 건너뜁니다.
--   **`fmkorea`**:
-    -   대상: FM코리아 베스트 게시판 (`/best`)
-    -   특징: `camoufox-js` 라이브러리를 사용하여 브라우저 핑거프린팅을 우회합니다. 댓글은 AJAX로 페이지별로 비동기 로드되며, 모든 페이지를 순회하여 전체 댓글을 수집합니다.
--   **`ppomppu-hot`**:
-    -   대상: 뽐뿌 핫게 (`/hot.php`)
-    -   특징: EUC-KR 인코딩을 사용하는 레거시 사이트 구조에 대응합니다. `iconv-lite`를 사용하여 응답을 UTF-8로 변환하며, 본문 내 상대 경로를 절대 경로로 변환하는 로직이 포함되어 있습니다. 댓글은 AJAX로 로드됩니다.
+## 6. 랭킹 및 클러스터링
 
-## 5. 랭킹 및 클러스터링
+- **랭킹 파이프라인**: `post_trends_asset`이 저장한 raw hot_score를 기반으로 `mv_post_trends_30m`(즉시 노출)과 `mv_post_trends_agg`(3h/6h/24h/1w 집계)를 갱신합니다. 웹 계층은 뷰 정규화·사이트별 인터리빙을 적용합니다.
+- **클러스터링**: `post_signatures_asset`의 시그니처를 사용해 LSH 후보 생성 → 조건부 유사도 검증으로 클러스터를 구성하고, `cluster_rotation_asset`이 감쇠·쿨다운 규칙을 적용해 섹션별 랭킹을 계산합니다.
+- **중복 제어**: `clusters_merge_asset`이 서로 다른 윈도우에서 생성된 유사 클러스터를 주기적으로 병합하여 대표글과 멤버를 정리합니다.
+- **Frontpage 회전**: `promote_p0_from_frontpage_asset`과 `cluster_rotation_asset`이 연동되어 프론트 노출 글의 LLM/VLM 큐를 즉시 승격하고, 연속 노출에 따른 suppress/cooldown을 관리합니다.
 
-프로젝트 계획과 `is_data_cluster.py` 코드를 비교 분석하여 랭킹 및 클러스터링 구현 현황을 기술합니다.
+## 7. 로드맵 및 향후 계획
 
-### 5.1. 랭킹 로직 (구현 계획)
+- [x] 파일 센서 및 `is_ingest_job` 연동 완료.
+- [x] AutomationCondition (`ON2/ON10/ON30/ON1H`)을 자산에 적용하여 선언형 스케줄 운영.
+- [x] Freshness 체크 및 센서 구축.
+- [x] 트렌드/클러스터/키워드 파이프라인 구현 및 머티리얼라이즈드 뷰 자동 갱신.
+- [x] LLM/VLM 큐 기반 후처리 파이프라인 운영.
+- [ ] Crawlee 커버리지 확장(더쿠 등 미구현 사이트) 및 증분 모드 고도화.
+- [ ] 웹/API 계층의 정규화 랭킹/인터리빙 로직과 Dagster 메타데이터 연동.
+- [ ] 모니터링 고도화: 큐 대기 시간, 워커 실패율, API SLA 지표 대시보드화.
 
--   **정규화 랭킹 (`ranked`)**:
-    1.  `post_trends` 델타(조회수, 댓글, 추천수)를 30분 단위로 집계
-    2.  사이트별 Z-score 정규화
-    3.  시간 감쇠(Time Decay) 적용: `exp(-age_hours / 6)`
-    4.  댓글 깊이에 따른 페널티 적용
--   **최신순 (`fresh`)**:
-    -   간단한 가중치(`3*likes + 2*comments + views`)만 적용
+## 8. 결론
 
-> **현황**: `post_trends_asset`은 구현되어 있으나, Z-score 정규화, 시간 감쇠, 페널티 등을 적용하는 최종 랭킹 로직은 아직 구현되지 않았습니다.
-
-### 5.2. 클러스터링 (중복 컨텐츠 처리)
-
--   **유사도 측정**:
-    -   텍스트: SimHash 또는 MinHash (계획)
-    -   이미지/임베드: MinHash (계획)
--   **클러스터링 조건 (계획)**:
-    -   `text Jaccard ≥ 0.75`
-    -   `(gallery ≥ 0.80) & (text ≥ 0.55)`
-    -   `(embed ≥ 0.85) & (text ≥ 0.50 or gallery ≥ 0.60)`
-
-> **현황**: `is_data_cluster.py` 파일에 `post_signatures`, `clusters`, `cluster_posts` 테이블을 생성하는 DDL이 포함되어 있어 **스키마는 정의**되어 있습니다. 하지만, 실제 유사도를 계산하고 데이터를 채우는 핵심 로직은 아직 **구현되지 않았습니다.**
-
-## 6. 로드맵 및 향후 계획
-
-프로젝트의 향후 계획을 현재 코드베이스 기준으로 정리했습니다.
-
--   [x] **파일 센서 구현**: `is_sensor_output_data.py`에 구현 완료.
--   [ ] **AutomationCondition 적용**: `EAGER`, `ON_CRON` 기반의 조건부 실행 로직 추가 필요.
--   [ ] **Freshness Checks 추가**: 주요 자산의 최신성 모니터링 기능 구현 필요.
--   [ ] **`post_trends_asset` 버그 수정**: 알려진 버그(`dislike_delta` NOT NULL 위반) 수정 필요.
--   [ ] **랭킹 및 클러스터링 로직 구현**: `cluster_build`, `cluster_rotation` 등 핵심 랭킹/클러스터링 자산의 로직 구현.
--   [ ] **키워드 추출 및 트렌드 집계**: `post_keywords_asset`, `keyword_trends_asset` 구현.
--   [ ] **프런트엔드 연동**: 인기 키워드 섹션 등 추가 기능 구현.
--   [ ] **운영 및 모니터링**: Dagster 스케줄 설정, 대시보드 구성, 유닛 테스트 보강.
-
-## 7. 결론
-
--   **현재 상태**: 각 커뮤니티 사이트에서 데이터를 수집하고 데이터베이스에 적재하는 기본적인 데이터 파이프라인(`posts_asset` 및 하위 자산)과 파일 센서가 구현되어 있습니다.
--   **주요 과제**: 프로젝트 계획에 명시된 핵심 기능인 **정규화 랭킹, 중복 컨텐츠 클러스터링, 키워드 트렌드 집계** 로직의 구현이 필요합니다. 또한, 파이프라인의 안정적이고 효율적인 운영을 위해 Dagster의 자동화 및 모니터링 기능(AutomationCondition, Freshness Checks)을 코드에 적용해야 합니다.
+현재 Isshoo 파이프라인은 JSON 수집 → 관계형 정규화 → 트렌드/클러스터/키워드 계산 → AI 후처리를 완결성 있게 구현하고 있으며, Dagster의 자동화 조건과 Freshness 체크로 운영 안정성을 확보했습니다. 향후에는 크롤러 커버리지 확대와 웹 노출 로직/모니터링 고도화를 통해 서비스 품질을 강화할 예정입니다.
 
 ---
-_문서 최종 업데이트: 2025-09-19 (Gemini Agent)_
+_문서 최종 업데이트: 2025-09-18 (OpenAI Assistant)_
