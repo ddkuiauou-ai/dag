@@ -26,11 +26,13 @@ Comprehensive coding guidelines for developing data pipelines using Dagster in t
 
 ### File Naming Conventions
 
-- **Project Prefixes**: All new files must include appropriate project prefixes
-  - `nps_` prefix for National Pension Service project files
-  - `cd_` prefix for CD (Chundan) stock project files
-  - `is_` prefix for IS (Isshoo) community content project files
-  - Example: `nps_business_data.py`, `cd_stock_prices.py`, `is_crawler.py`
+- **Project Prefixes**: All new files must include appropriate project prefixes so Dagster modules stay organized by pipeline.
+  - `cd_` prefix for the CD (Chundan) stock orchestration code (including history and Turso variants such as `cd_history_*` and `cd_*_turso`).
+  - `ds_` prefix for the DS (DataStory) computer-vision pipelines.
+  - `is_` prefix for the IS (Isshoo) crawler and enrichment pipelines.
+  - `ss_` prefix for the SS (Silla-Store) crawler pipelines and dictionary assets.
+  - `nps_` prefix for the National Pension Service (NPS) workloads.
+  - Example: `cd_price_processing.py`, `ds_img_r2_processing.py`, `is_data_sync.py`, `ss_data_sync.py`, `nps_raw_ingestion.py`.
 
 ### File Size Management
 
@@ -39,11 +41,14 @@ Comprehensive coding guidelines for developing data pipelines using Dagster in t
 - **Logical Separation**: Split files based on functional boundaries and asset groups
 - **Example Split Strategy**:
   ```
-  nps_raw_data.py        # Raw data ingestion assets
-  nps_processed_data.py  # Data transformation assets
-  nps_analytics.py       # Analytics and reporting assets
-  nps_utils.py          # Helper functions and utilities
+  nps_raw_ingestion.py      # Raw history ingestion assets (downloads)
+  nps_data_processing.py    # CSV 정제 및 DuckDB 적재
+  nps_postgres_simple.py    # DuckDB → Postgres 적재 및 증분 로딩
+  nps_index_optimization.py # 분석/모델링 자산
+  nps_kyc_etl.py            # SaaS 및 KYC 동기화 자산
   ```
+
+> **Future improvement**: 이전 가이드에서는 분석·리포트 전용 모듈(`nps_reporting.py`, `cd_analytics.py`)이나 공용 유틸리티 모듈(`shared_utils.py`, `common_analytics.py`)을 별도로 두어 재사용 로직을 분리할 것을 제안했습니다. 현재 트리에서는 아직 반영되지 않았지만, 대용량 분석 또는 다중 프로젝트에서 공유되는 계산 로직이 늘어날 경우 이러한 파일명을 미리 예약해 두고 분리 계획을 유지하세요.
 
 ### Asset Organization Strategy
 
@@ -65,35 +70,35 @@ Comprehensive coding guidelines for developing data pipelines using Dagster in t
 ```python
 # GOOD: Split into separate assets for reusability and monitoring
 @dg.asset(
-    group_name="nps_processing",
+    group_name="NPS",
     tags={"data_tier": "bronze", "domain": "pension"}
 )
-def nps_raw_business_data() -> dg.MaterializeResult:
-    # Raw data ingestion
+def nps_his_download() -> dg.MaterializeResult:
+    """Raw CSV 다운로드 (history/in 폴더 저장)"""
     pass
 
 @dg.asset(
-    deps=["nps_raw_business_data"],
-    group_name="nps_processing",
+    deps=["nps_his_download"],
+    group_name="NPS",
     tags={"data_tier": "silver", "domain": "pension"}
 )
-def nps_cleaned_business_data() -> dg.MaterializeResult:
-    # Data cleaning and standardization
+def nps_his_digest() -> dg.MaterializeResult:
+    """CSV 인코딩 변환 및 DuckDB 정제"""
     pass
 
 @dg.asset(
-    deps=["nps_cleaned_business_data"],
-    group_name="nps_analytics",
+    deps=["nps_his_digest"],
+    group_name="NPS",
     tags={"data_tier": "gold", "domain": "pension"}
 )
-def nps_business_metrics() -> dg.MaterializeResult:
-    # Business metrics calculation
+def nps_his_postgres_append() -> dg.MaterializeResult:
+    """정제된 데이터를 Postgres로 적재"""
     pass
 
 # AVOID: Monolithic asset doing everything
 @dg.asset
 def nps_complete_pipeline() -> dg.MaterializeResult:
-    # Don't combine raw ingestion, cleaning, and analytics in one asset
+    """원시 다운로드부터 적재까지 단일 에셋으로 구현하지 마세요"""
     pass
 ```
 
@@ -110,167 +115,426 @@ When adding new assets to the DAG project, proper registration in `definitions.p
 When creating new asset modules, follow the established naming conventions:
 
 ```python
-# Example: nps_analytics.py
+# Example: nps_postgres_simple.py
 """
-NPS Analytics - Gold Tier
-국민연금 분석 및 보고서 생성
+NPS Postgres Sync - Gold Tier
+국민연금 정제 데이터를 Postgres에 적재
 """
 
-from dagster import AssetExecutionContext, asset
 import dagster as dg
+from dagster import AssetExecutionContext
+from dagster_duckdb import DuckDBResource
+from dag.resources import PostgresResource
 
-@asset(
-    description="NPS 사업장 분석 리포트 생성 - Gold Tier",
+
+@dg.asset(
+    description="정제된 NPS 데이터를 Postgres warehouse로 적재",
     group_name="NPS",
-    kinds={"python", "analytics"},
+    kinds={"python", "postgres"},
     tags={
         "domain": "finance",
         "data_tier": "gold",
-        "source": "national_pension"
+        "source": "national_pension",
     },
-    deps=["nps_his_digest"]  # 의존성 명시
+    deps=["nps_his_digest"],
 )
-def nps_business_analytics(
+def nps_his_postgres_append(
     context: AssetExecutionContext,
     nps_duckdb: DuckDBResource,
+    nps_postgres: PostgresResource,
 ) -> dg.MaterializeResult:
-    """NPS 사업장 데이터 기반 비즈니스 분석"""
-    # 분석 로직 구현
+    """DuckDB에서 변환된 데이터를 Postgres 테이블에 병합"""
+    # 적재 로직 구현
     pass
 ```
 
 #### Step 2: Update definitions.py
 
-새로운 모듈을 생성한 후, 반드시 `definitions.py`에 추가해야 합니다:
-
-**현재 프로젝트 상태 (2025년 5월 기준):**
+새로운 모듈을 생성한 후에는 `dag/definitions.py`에 있는 중앙 정의를 함께 업데이트해야 합니다. 이 파일은 다섯 개의 프로젝트(CD, DS, IS, SS, NPS)와 공유 리소스/스케줄/센서를 모두 한곳에서 묶어 줍니다.
 
 ```python
-# dag/definitions.py
-from dagster import Definitions, EnvVar, load_assets_from_modules
-from dagster_duckdb import DuckDBResource
-from .resources import PostgresResource
-
-from dag import nps_raw_ingestion, nps_data_processing  # noqa: TID252
-
-all_nps_assets = load_assets_from_modules([nps_raw_ingestion, nps_data_processing])
-
-defs = Definitions(
-    assets=all_nps_assets,
-    resources={
-        "cd_duckdb": DuckDBResource(database="data/cd.duckdb"),
-        "nps_duckdb": DuckDBResource(database="data/nps.duckdb"),
-        "postgres": PostgresResource(
-            host=EnvVar("POSTGRES_HOST"),
-            port=EnvVar.int("POSTGRES_PORT"),
-            user=EnvVar("POSTGRES_USER"),
-            password=EnvVar("POSTGRES_PASSWORD"),
-            database=EnvVar("POSTGRES_DB"),
-        ),
-    },
+# dag/definitions.py (발췌)
+from dagster import (
+    Definitions,
+    EnvVar,
+    build_last_update_freshness_checks,
+    build_sensor_for_freshness_checks,
+    load_asset_checks_from_modules,
+    load_assets_from_modules,
 )
-```
-
-**새로운 애셋 모듈 추가 시 확장 방법:**
-
-```python
-# dag/definitions.py
-from dagster import Definitions, EnvVar, load_assets_from_modules
+from datetime import timedelta as _td
 from dagster_duckdb import DuckDBResource
-from .resources import PostgresResource
+from dagster_docker import PipesDockerClient
+from dagster_openai import OpenAIResource
 
-# 모든 애셋 모듈을 임포트
-from dag import (
-    nps_raw_ingestion,     # Bronze tier
-    nps_data_processing,   # Silver tier
-    nps_analytics,         # Gold tier - 새로 추가된 모듈
-    cd_raw_ingestion,      # CD 프로젝트 모듈들
-    cd_data_processing,
-    # ... 기타 모듈들
+from .resources import PostgresResource, TursoResource
+from . import (  # noqa: TID252
+    cd_raw_ingestion,
+    cd_bppedd_processing,
+    cd_display_processing,
+    cd_marketcap_processing,
+    cd_metrics_processing,
+    cd_price_processing,
+    cd_img_r2_processing,
+    cd_img_r2_docker,
+    cd_raw_ingestion_turso,
+    cd_price_processing_turso,
+    cd_bppedd_processing_turso,
+    cd_marketcap_processing_turso,
+    cd_metrics_processing_turso,
+    cd_history_prices,
+    cd_history_marketcaps,
+    cd_history_bppedds,
+    cd_img_r2_node,
 )
-
-# 프로젝트별 애셋 그룹화
-nps_assets = load_assets_from_modules([
+from . import (  # noqa: TID252
+    ds_img_r2_docker,
+    ds_img_r2_processing,
+    ds_img_r2_node,
+)
+from . import (  # noqa: TID252
     nps_raw_ingestion,
     nps_data_processing,
-    nps_analytics,  # ← 새로 추가
-])
+    nps_postgres_simple,
+    nps_index_optimization,
+    nps_kyc_etl,
+)
+from . import (  # noqa: TID252
+    is_node,
+    is_data_sync,
+    is_data_unsync,
+    is_data_llm,
+    is_data_vlm,
+    is_data_cluster,
+)
+from . import ss_node, ss_data_sync, ss_data_llm, ss_data_dictionary
 
-cd_assets = load_assets_from_modules([
+from .jobs import (  # noqa: TID252
+    nps_history_job,
+    cd_daily_update_job,
+    cd_daily_update_turso_job,
+    cd_history_job,
+    cd_docker_job,
+    cd_node_job,
+    ds_docker_job,
+    ds_node_job,
+    is_ingest_job,
+    is_crawler_10min_job,
+    is_crawler_interval_job,
+    ss_ingest_job,
+)
+from .schedules import (  # noqa: TID252
+    cd_daily_update_schedule,
+    is_crawler_schedule_10min,
+)
+from .is_sensor_output_data import is_output_data_sensor
+from .ss_data_sync import ss_crawl_sources
+from .is_node import is_crawler_executor_interval_schedule
+from .is_data_unsync import post_trends_asset, keyword_trends_asset
+from .is_data_cluster import cluster_rotation_asset
+```
+
+프로젝트별로 `load_assets_from_modules`와 `load_asset_checks_from_modules` 호출이 준비되어 있으므로 새로운 모듈을 추가할 때는 해당 리스트에 모듈을 반드시 포함시켜야 합니다.
+
+```python
+all_cd_assets = load_assets_from_modules([
     cd_raw_ingestion,
-    cd_data_processing,
+    cd_bppedd_processing,
+    cd_display_processing,
+    cd_marketcap_processing,
+    cd_metrics_processing,
+    cd_price_processing,
+    cd_img_r2_processing,
+    cd_img_r2_docker,
+    cd_raw_ingestion_turso,
+    cd_price_processing_turso,
+    cd_bppedd_processing_turso,
+    cd_marketcap_processing_turso,
+    cd_metrics_processing_turso,
+    cd_history_prices,
+    cd_history_marketcaps,
+    cd_history_bppedds,
+    cd_img_r2_node,
 ])
 
-# 전체 애셋 통합
-all_assets = [*nps_assets, *cd_assets]
+all_ds_assets = load_assets_from_modules([
+    ds_img_r2_docker,
+    ds_img_r2_processing,
+    ds_img_r2_node,
+])
 
+all_nps_assets = load_assets_from_modules([
+    nps_raw_ingestion,
+    nps_data_processing,
+    nps_postgres_simple,
+    nps_index_optimization,
+    nps_kyc_etl,
+])
+
+all_nps_asset_checks = load_asset_checks_from_modules([
+    nps_raw_ingestion,
+    nps_data_processing,
+    nps_postgres_simple,
+    nps_index_optimization,
+    nps_kyc_etl,
+])
+
+all_is_assets = load_assets_from_modules([
+    is_node,
+    is_data_sync,
+    is_data_unsync,
+    is_data_llm,
+    is_data_vlm,
+    is_data_cluster,
+])
+
+all_ss_assets = load_assets_from_modules([
+    ss_node,
+    ss_data_sync,
+    ss_data_llm,
+    ss_data_dictionary,
+])
+
+post_trends_freshness_checks = build_last_update_freshness_checks(
+    assets=[post_trends_asset],
+    lower_bound_delta=_td(minutes=10),
+)
+cluster_rotation_freshness_checks = build_last_update_freshness_checks(
+    assets=[cluster_rotation_asset],
+    lower_bound_delta=_td(minutes=10),
+)
+keyword_trends_freshness_checks = build_last_update_freshness_checks(
+    assets=[keyword_trends_asset],
+    lower_bound_delta=_td(minutes=10),
+)
+_all_freshness_checks = (
+    post_trends_freshness_checks
+    + cluster_rotation_freshness_checks
+    + keyword_trends_freshness_checks
+)
+freshness_checks_sensor = build_sensor_for_freshness_checks(
+    freshness_checks=_all_freshness_checks,
+)
+```
+
+`Definitions` 객체는 자산, 에셋 체크, 잡, 스케줄, 센서, 리소스를 모두 한 번에 등록합니다. 새로운 리소스를 도입할 때는 아래 블록을 참고해 동일한 패턴을 유지하세요.
+
+```python
 defs = Definitions(
-    assets=all_assets,
+    assets=[
+        *all_cd_assets,
+        *all_ds_assets,
+        *all_nps_assets,
+        *all_is_assets,
+        *all_ss_assets,
+    ],
+    asset_checks=[
+        *all_nps_asset_checks,
+        *_all_freshness_checks,
+    ],
+    jobs=[
+        nps_history_job,
+        cd_history_job,
+        cd_docker_job,
+        cd_node_job,
+        ds_docker_job,
+        ds_node_job,
+        cd_daily_update_job,
+        cd_daily_update_turso_job,
+        is_ingest_job,
+        ss_ingest_job,
+        is_crawler_10min_job,
+        is_crawler_interval_job,
+    ],
+    schedules=[
+        cd_daily_update_schedule,
+        is_crawler_schedule_10min,
+        is_crawler_executor_interval_schedule,
+    ],
+    sensors=[
+        is_output_data_sensor,
+        freshness_checks_sensor,
+    ],
     resources={
+        "docker_pipes_client": PipesDockerClient(),
         "cd_duckdb": DuckDBResource(database="data/cd.duckdb"),
         "nps_duckdb": DuckDBResource(database="data/nps.duckdb"),
-        "postgres": PostgresResource(
-            host=EnvVar("POSTGRES_HOST"),
-            port=EnvVar.int("POSTGRES_PORT"),
-            user=EnvVar("POSTGRES_USER"),
-            password=EnvVar("POSTGRES_PASSWORD"),
-            database=EnvVar("POSTGRES_DB"),
+        "ds_duckdb": DuckDBResource(database="data/ds.duckdb"),
+        "cd_postgres": PostgresResource(
+            host=EnvVar("CD_POSTGRES_HOST"),
+            port=EnvVar.int("CD_POSTGRES_PORT"),
+            user=EnvVar("CD_POSTGRES_USER"),
+            password=EnvVar("CD_POSTGRES_PASSWORD"),
+            database=EnvVar("CD_POSTGRES_DB"),
+        ),
+        "ds_postgres": PostgresResource(
+            host=EnvVar("DS_POSTGRES_HOST"),
+            port=EnvVar.int("DS_POSTGRES_PORT"),
+            user=EnvVar("DS_POSTGRES_USER"),
+            password=EnvVar("DS_POSTGRES_PASSWORD"),
+            database=EnvVar("DS_POSTGRES_DB"),
+        ),
+        "nps_postgres": PostgresResource(
+            host=EnvVar("NPS_POSTGRES_HOST"),
+            port=EnvVar.int("NPS_POSTGRES_PORT"),
+            user=EnvVar("NPS_POSTGRES_USER"),
+            password=EnvVar("NPS_POSTGRES_PASSWORD"),
+            database=EnvVar("NPS_POSTGRES_DB"),
+        ),
+        "is_postgres": PostgresResource(
+            host=EnvVar("IS_POSTGRES_HOST"),
+            port=EnvVar.int("IS_POSTGRES_PORT"),
+            user=EnvVar("IS_POSTGRES_USER"),
+            password=EnvVar("IS_POSTGRES_PASSWORD"),
+            database=EnvVar("IS_POSTGRES_DB"),
+        ),
+        "cd_turso": TursoResource(
+            url=EnvVar("TURSO_DATABASE_URL"),
+            auth_token=EnvVar("TURSO_AUTH_TOKEN"),
+        ),
+        "openai": OpenAIResource(
+            base_url="http://192.168.50.204:1234/v1",
+            api_key="ollama",
+        ),
+        "omen": OpenAIResource(
+            base_url="http://192.168.50.12:1234/v1",
+            api_key="ollama",
+        ),
+        "oss": OpenAIResource(
+            base_url="http://192.168.50.107:1234/v1",
+            api_key="oss",
+        ),
+        "qwen25": OpenAIResource(
+            base_url="http://192.168.50.107:1234/v1",
+            api_key="qwen",
+        ),
+        "gemini": OpenAIResource(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key="AIzaSyD50H5babYxOodY-saVsGOk-1hS3Oo--Dw",
         ),
     },
 )
 ```
+
+> **필수 체크**: 모듈을 추가하거나 이름을 변경했다면 `load_assets_from_modules` 리스트, 관련 잡/스케줄/센서 등록, 그리고 리소스 매핑까지 모두 반영되었는지 반드시 확인하세요. Dagster UI에서 새 모듈이 표시되지 않으면 대부분 이 단계가 누락된 것입니다.
 
 ### Module Organization Strategies
 
 #### Strategy 1: Project-Based Grouping (권장)
 
-프로젝트별로 애셋을 그룹화하여 관리:
+프로젝트별로 애셋을 그룹화하여 관리합니다. 실제 `definitions.py`에서는 아래와 같이 도메인/백엔드별 리스트를 유지합니다.
 
 ```python
 # NPS 프로젝트 애셋들
 nps_assets = load_assets_from_modules([
-    nps_raw_ingestion,      # Bronze
-    nps_data_processing,    # Silver
-    nps_analytics,          # Gold
-    nps_reporting,          # Gold+
+    nps_raw_ingestion,      # Bronze ingestion
+    nps_data_processing,    # Silver cleansing
+    nps_postgres_simple,    # Warehouse sync
+    nps_index_optimization, # Analytics/optimizer
+    nps_kyc_etl,            # SaaS ETL
 ])
 
-# CD 프로젝트 애셋들
+# CD 프로젝트 애셋들 (DuckDB + 이미지 파이프라인)
 cd_assets = load_assets_from_modules([
-    cd_raw_ingestion,       # Bronze
-    cd_data_processing,     # Silver
-    cd_analytics,           # Gold
+    cd_raw_ingestion,
+    cd_bppedd_processing,
+    cd_display_processing,
+    cd_marketcap_processing,
+    cd_metrics_processing,
+    cd_price_processing,
+    cd_img_r2_processing,
+    cd_img_r2_docker,
+    cd_img_r2_node,
 ])
 
-# 공통/유틸리티 애셋들
-utility_assets = load_assets_from_modules([
-    shared_utils,
-    common_analytics,
+# CD 프로젝트 Turso 미러링 애셋들
+cd_turso_assets = load_assets_from_modules([
+    cd_raw_ingestion_turso,
+    cd_price_processing_turso,
+    cd_bppedd_processing_turso,
+    cd_marketcap_processing_turso,
+    cd_metrics_processing_turso,
+])
+
+# CD 과거 데이터 백필 애셋들
+cd_history_assets = load_assets_from_modules([
+    cd_history_prices,
+    cd_history_marketcaps,
+    cd_history_bppedds,
+])
+
+# DS (DataStory) 컴퓨터 비전 파이프라인
+ds_assets = load_assets_from_modules([
+    ds_img_r2_docker,
+    ds_img_r2_processing,
+    ds_img_r2_node,
+])
+
+# IS (Isshoo) 크롤러 및 파생 데이터
+is_assets = load_assets_from_modules([
+    is_node,
+    is_data_sync,
+    is_data_unsync,
+    is_data_llm,
+    is_data_vlm,
+    is_data_cluster,
+])
+
+# SS (Silla-Store) 크롤러 및 사전 데이터
+ss_assets = load_assets_from_modules([
+    ss_node,
+    ss_data_sync,
+    ss_data_llm,
+    ss_data_dictionary,
 ])
 ```
 
-#### Strategy 2: Data Tier-Based Grouping
+#### Strategy 2: Backend/Environment Grouping
 
-데이터 계층별로 그룹화 (소규모 프로젝트용):
+특정 백엔드나 실행환경(Turso, Docker, Node 등)에 따라 리스트를 분리합니다. 예를 들어 CD 파이프라인은 DuckDB·Turso·히스토리·이미지
+실행 환경별로 별도 리스트를 유지하여 잡과 리소스가 올바르게 연결되도록 합니다. 새로운 모듈이 Turso를 사용한다면 `cd_turso_assets`와 같이
+해당 백엔드 전용 리스트에 추가해야 합니다.
+
+#### Strategy 3: Data Tier-Based Grouping (Future Enhancement)
+
+이전 버전의 가이드에서는 Bronze/Silver/Gold 계층별 리스트를 유지해 **Medallion Architecture** 단위로 애셋을 제어하는 방식을 추천했습니다. 현재 레포에서는 프로젝트/백엔드 기준으로 그룹화하지만, 계층별 재처리가 필요해질 때를 대비해 아래 전략을 염두에 두세요.
 
 ```python
-# 계층별 그룹화
-bronze_assets = load_assets_from_modules([
+# Bronze 계층 모듈 예시 (원시 수집 중심)
+bronze_modules = [
     nps_raw_ingestion,
     cd_raw_ingestion,
-])
+    ss_node,
+    is_node,
+]
+bronze_assets = load_assets_from_modules(bronze_modules)
 
-silver_assets = load_assets_from_modules([
+# Silver 계층 모듈 예시 (정제/정규화)
+silver_modules = [
     nps_data_processing,
-    cd_data_processing,
-])
+    cd_bppedd_processing,
+    cd_marketcap_processing,
+    cd_price_processing,
+    ds_img_r2_processing,
+    ss_data_sync,
+    is_data_sync,
+]
+silver_assets = load_assets_from_modules(silver_modules)
 
-gold_assets = load_assets_from_modules([
-    nps_analytics,
-    cd_analytics,
-    cross_domain_analytics,
-])
+# Gold 계층 모듈 예시 (분석/웨어하우스 적재)
+gold_modules = [
+    nps_postgres_simple,
+    nps_index_optimization,
+    cd_metrics_processing,
+    cd_img_r2_docker,
+    cd_img_r2_node,
+    ss_data_llm,
+    is_data_llm,
+]
+gold_assets = load_assets_from_modules(gold_modules)
 ```
+
+> **Tip**: `data_tier` 태그가 이미 모든 자산에 붙어 있으므로, 위와 같은 리스트를 유지하면 `AssetSelection.tag("data_tier", "silver")`와 같은 잡 정의를 손쉽게 복원할 수 있습니다.
 
 ### Best Practices for Asset Registration
 
@@ -278,10 +542,10 @@ gold_assets = load_assets_from_modules([
 
 ```python
 # GOOD: 명확한 모듈명 사용
-from dag import nps_raw_ingestion, nps_data_processing
+from dag import cd_raw_ingestion, cd_marketcap_processing
 
 # AVOID: 혼란스러운 별칭
-from dag import nps_raw_ingestion as nps_raw
+from dag import cd_raw_ingestion as cri
 ```
 
 #### 2. Logical Grouping
@@ -291,14 +555,16 @@ from dag import nps_raw_ingestion as nps_raw
 all_nps_assets = load_assets_from_modules([
     nps_raw_ingestion,
     nps_data_processing,
-    nps_analytics,
+    nps_postgres_simple,
+    nps_index_optimization,
+    nps_kyc_etl,
 ])
 
 # AVOID: 무작위 순서
 random_assets = load_assets_from_modules([
-    nps_analytics,
-    cd_raw_ingestion,
+    cd_img_r2_docker,
     nps_raw_ingestion,
+    cd_metrics_processing_turso,
 ])
 ```
 
@@ -307,9 +573,11 @@ random_assets = load_assets_from_modules([
 ```python
 # 각 모듈의 역할을 명확히 문서화
 nps_assets = load_assets_from_modules([
-    nps_raw_ingestion,     # 원시 데이터 수집 (Bronze)
-    nps_data_processing,   # 데이터 정제 및 변환 (Silver)
-    nps_analytics,         # 비즈니스 분석 (Gold)
+    nps_raw_ingestion,        # Raw history ingestion (Bronze)
+    nps_data_processing,      # CSV 정제 및 변환 (Silver)
+    nps_postgres_simple,      # DuckDB → Postgres 적재 (Gold)
+    nps_index_optimization,   # 지수 최적화 분석 (Analytics)
+    nps_kyc_etl,              # SaaS KYC 테이블 동기화
 ])
 ```
 
@@ -319,7 +587,7 @@ nps_assets = load_assets_from_modules([
 
 ```bash
 # 현재 프로젝트 디렉토리로 이동
-cd /Users/craigchoi/silla/dag
+cd /workspace/dag
 
 # 터미널에서 애셋 목록 확인
 python -c "from dag.definitions import defs; print(f'Total assets: {len(defs.assets)}'); [print(f'- {asset.key}') for asset in defs.assets[:10]]"
@@ -392,11 +660,11 @@ from dag import nps_data_processing    # ✅
 ```python
 # 문제: 여러 모듈에서 같은 애셋 이름 사용
 # nps_data_processing.py에 'clean_data'
-# cd_data_processing.py에 'clean_data'
+# cd_price_processing.py에 'clean_data'
 
 # 해결: 고유한 애셋 이름 사용
 # nps_data_processing.py에 'nps_clean_data'
-# cd_data_processing.py에 'cd_clean_data'
+# cd_price_processing.py에 'cd_clean_data'
 ```
 
 #### 문제 3: 의존성 오류
@@ -471,12 +739,13 @@ def debug_module_assets(module_name):
 ### Asset Naming Conventions
 
 ```python
-# 애셋 이름 패턴: {project}_{tier}_{domain}_{action}
-nps_raw_business_data      # NPS 원시 사업장 데이터
-nps_silver_clean_data      # NPS 정제된 데이터
-nps_gold_analytics_report  # NPS 분석 리포트
-cd_raw_stock_prices        # CD 원시 주가 데이터
-cd_gold_investment_insight # CD 투자 인사이트
+# 애셋 이름 패턴: {project}_{noun}_{verb}
+nps_his_download           # NPS 원시 사업장 데이터 다운로드
+nps_his_digest             # NPS CSV 정제 및 인코딩 변환
+nps_his_postgres_append    # NPS Postgres 적재
+cd_prices                  # CD 일별 OHLCV 수집
+cd_digest_price            # CD 가격 정제 및 영구 테이블 적재
+cd_populate_security_ranks # CD 종목 지표 순위 계산
 ```
 
 ### Function and Asset Name Consistency
@@ -486,18 +755,18 @@ cd_gold_investment_insight # CD 투자 인사이트
 ```python
 # ✅ 올바른 예시 - 함수명과 asset명이 일치
 @dg.asset(
-    name="nps_raw_ingestion",  # Asset명
-    group_name="nps_bronze",
-    tags={"tier": "bronze", "project": "nps"}
+    name="nps_his_download",  # Asset명
+    group_name="NPS",
+    tags={"data_tier": "bronze", "project": "nps"}
 )
-def nps_raw_ingestion(context: AssetExecutionContext) -> dg.MaterializeResult:
+def nps_his_download(context: AssetExecutionContext) -> dg.MaterializeResult:
     # 함수명과 asset명이 정확히 일치
     pass
 
 # ❌ 잘못된 예시 - 함수명과 asset명이 불일치
 @dg.asset(
-    name="nps_raw_ingestion",  # Asset명
-    group_name="nps_bronze"
+    name="nps_his_download",  # Asset명
+    group_name="NPS"
 )
 def fetch_nps_data(context: AssetExecutionContext):  # 다른 함수명
     pass
@@ -508,18 +777,18 @@ def fetch_nps_data(context: AssetExecutionContext):  # 다른 함수명
 ```python
 # ✅ Asset명으로 의존성 참조
 @dg.asset(
-    deps=["nps_raw_ingestion"],  # Asset명 사용
-    name="nps_data_processing"
+    deps=["nps_his_download"],  # Asset명 사용
+    name="nps_his_digest"
 )
-def nps_data_processing(context: AssetExecutionContext):
+def nps_his_digest(context: AssetExecutionContext):
     pass
 
 # ❌ 함수명으로 의존성 참조하면 안됨
 @dg.asset(
     deps=["fetch_nps_data"],  # 이렇게 하면 안됨
-    name="nps_data_processing"
+    name="nps_his_digest"
 )
-def nps_data_processing(context: AssetExecutionContext):
+def nps_his_digest_wrong(context: AssetExecutionContext):
     pass
 ```
 
@@ -627,40 +896,61 @@ Dagster Jobs allow you to group related assets and execute them together as a co
 
 ### Job Definition Strategy
 
-#### Asset Selection Methods
-
-Jobs use `AssetSelection` to define which assets to include:
+현재 `dag/jobs.py`에서는 AssetSelection의 downstream 기능과 그룹 기반 선택을 조합해 각 파이프라인 실행 단위를 정의합니다.
 
 ```python
 import dagster as dg
+from .partitions import daily_exchange_category_partition
 
-# 1. Group-based selection (권장)
+cd_targets = dg.AssetSelection.assets("cd_stockcode").downstream()
+cd_targets_turso = dg.AssetSelection.assets("cd_stockcode_turso").downstream()
+cd_history_targets = dg.AssetSelection.assets(
+    "historical_prices",
+    "historical_marketcaps",
+    "historical_bppedds",
+).downstream()
+cd_docker_targets = dg.AssetSelection.assets("cd_img_r2_docker").downstream()
+cd_node_targets = dg.AssetSelection.assets("cd_img_r2_node").downstream()
+ds_docker_targets = dg.AssetSelection.assets("ds_img_r2_docker").downstream()
+ds_node_targets = dg.AssetSelection.assets("ds_img_r2_node").downstream()
+is_targets = dg.AssetSelection.assets("posts_asset").downstream()
+ss_targets = dg.AssetSelection.assets("ss_crawl_sources").downstream()
 nps_targets = dg.AssetSelection.groups("NPS")
-
-# 2. Tag-based selection
-bronze_assets = dg.AssetSelection.tag("data_tier", "bronze")
-
-# 3. Specific asset selection
-specific_assets = dg.AssetSelection.assets(["nps_his_download", "nps_his_digest"])
-
-# 4. Upstream/downstream selection
-downstream_assets = dg.AssetSelection.assets(["nps_his_download"]).downstream()
 ```
+
+#### Tier-Based & Cross-Domain Jobs (Future Enhancement)
+
+이전 가이드에서는 `data_tier` 태그나 공통 태그를 활용해 다중 프로젝트 자산을 한 번에 실행하는 잡을 제안했습니다. 현재 레포에서는 프로젝트별 잡에 집중하지만, 계층별 백필이나 교차 분석이 필요해질 때 아래 패턴을 재도입할 수 있도록 문서를 유지합니다.
+
+```python
+# Bronze 계층 전체를 주기적으로 재수집하는 Job
+bronze_job = dg.define_asset_job(
+    name="bronze_ingestion_job",
+    selection=dg.AssetSelection.tag("data_tier", "bronze"),
+    description="모든 Bronze 계층 데이터를 일괄 재수집",
+    tags={"tier": "bronze", "type": "ingestion"},
+)
+
+# Gold 계층 교차 분석 Job
+cross_domain_job = dg.define_asset_job(
+    name="cross_domain_analytics",
+    selection=dg.AssetSelection.tag("data_tier", "gold"),
+    description="프로젝트 전반의 Gold 자산을 결합 분석",
+    tags={"type": "analytics", "priority": "high"},
+)
+```
+
+> **Reminder**: 이러한 잡을 정의할 경우 `dag/jobs.py`와 `definitions.py` 모두에 등록하고, `data_tier` 태그가 일관되게 유지되는지 확인하세요.
 
 ### Creating Job Modules
 
-#### Step 1: Create jobs.py
-
-모든 job 정의는 `dag/jobs.py`에 중앙 집중화:
+모든 job 정의는 `dag/jobs.py`에 위치합니다. 실제 파일 구조는 다음과 같습니다.
 
 ```python
 # dag/jobs.py
 import dagster as dg
+from .partitions import daily_exchange_category_partition
 
-# NPS 프로젝트 관련 애셋 그룹
-nps_targets = dg.AssetSelection.groups("NPS")
-
-# NPS 히스토리 데이터 처리 Job
 nps_history_job = dg.define_asset_job(
     name="nps_history_job",
     selection=nps_targets,
@@ -668,83 +958,147 @@ nps_history_job = dg.define_asset_job(
     tags={"source": "NPS", "type": "history"},
 )
 
-# CD 프로젝트 관련 Job (예시)
-cd_targets = dg.AssetSelection.groups("CD")
-
-cd_daily_job = dg.define_asset_job(
-    name="cd_daily_job",
+cd_daily_update_job = dg.define_asset_job(
+    name="cd_daily_update_job",
+    partitions_def=daily_exchange_category_partition,
     selection=cd_targets,
-    description="CD 주식 데이터 일일 처리",
-    tags={"source": "CD", "type": "daily"},
+    description="매일 주식 가격 업데이트",
+    tags={"type": "daily_update"},
 )
 
-# 데이터 계층별 Job (예시)
-bronze_job = dg.define_asset_job(
-    name="bronze_ingestion_job",
-    selection=dg.AssetSelection.tag("data_tier", "bronze"),
-    description="모든 Bronze 계층 데이터 수집",
-    tags={"tier": "bronze", "type": "ingestion"},
+cd_daily_update_turso_job = dg.define_asset_job(
+    name="cd_daily_update_turso_job",
+    partitions_def=daily_exchange_category_partition,
+    selection=cd_targets_turso,
+    description="매일 주식 가격 업데이트 (TursoDB)",
+    tags={"type": "daily_update"},
+)
+
+cd_history_job = dg.define_asset_job(
+    name="cd_history_job",
+    selection=cd_history_targets,
+    description="과거 데이터 한번에 가지고 오기",
+    tags={"type": "history"},
+)
+
+cd_docker_job = dg.define_asset_job(
+    name="cd_docker_job",
+    selection=cd_docker_targets,
+    description="CD 이미지 처리용 도커 컨테이너를 실시간 로그 스트리밍으로 실행합니다.",
+    tags={"source": "docker", "type": "realtime"},
+)
+
+cd_node_job = dg.define_asset_job(
+    name="cd_node_job",
+    selection=cd_node_targets,
+    description="CD 이미지 처리용 노드 컨테이너를 실시간 로그 스트리밍으로 실행합니다.",
+    tags={"source": "node", "type": "realtime"},
+)
+
+ds_docker_job = dg.define_asset_job(
+    name="ds_docker_job",
+    selection=ds_docker_targets,
+    description="DS 이미지 처리용 도커 컨테이너를 실시간 로그 스트리밍으로 실행합니다.",
+    tags={"source": "docker", "type": "realtime"},
+)
+
+ds_node_job = dg.define_asset_job(
+    name="ds_node_job",
+    selection=ds_node_targets,
+    description="DS 이미지 처리용 노드 컨테이너를 실시간 로그 스트리밍으로 실행합니다.",
+    tags={"source": "node", "type": "realtime"},
+)
+
+is_ingest_job = dg.define_asset_job(
+    name="is_ingest_job",
+    selection=is_targets,
+    description="IS 크롤러 output_data 적재 전체 파이프라인",
+    tags={"source": "IS", "type": "ingest", "dagster/priority": "3"},
+)
+
+ss_ingest_job = dg.define_asset_job(
+    name="ss_ingest_job",
+    selection=ss_targets,
+    description="SS 크롤러 ssdata 적재 전체 파이프라인",
+    tags={"source": "SS", "type": "ingest", "dagster/priority": "3"},
+)
+
+is_crawler_10min_job = dg.define_asset_job(
+    name="is_crawler_job_10min",
+    selection=dg.AssetSelection.assets("is_crawler_executor"),
+    description="IS 크롤러 executor 을 매 10분마다 실행합니다. 신규 게시글만 크롤링",
+    tags={"type": "schedule", "interval": "10min"},
+)
+
+is_crawler_interval_job = dg.define_asset_job(
+    name="is_crawler_interval_job",
+    selection=dg.AssetSelection.assets("is_crawler_executor_interval"),
+    description="IS 크롤러 executor 을 매 30분, 1시간, 3시간, 6시간, 12시간, 24시간, 48시간마다 실행합니다.",
+    tags={"type": "schedule", "interval": "30min, 1h, 3h, 6h, 12h, 24h, 48h"},
 )
 ```
 
-#### Step 2: Update definitions.py
-
-Job을 정의한 후, `definitions.py`에 등록:
+새로운 Job을 추가할 때는 위 패턴을 따라 `dag/jobs.py`에 정의하고, 앞서 설명한 `Definitions`의 `jobs` 리스트에 동일한 이름을 추가합니다.
 
 ```python
+# 신규 Job 예시: DS 백필 파이프라인 (필요 시 새로운 시드 애셋 정의 후 사용)
+ds_backfill_targets = dg.AssetSelection.assets("ds_backfill_seed").downstream()
+ds_backfill_job = dg.define_asset_job(
+    name="ds_backfill_job",
+    selection=ds_backfill_targets,
+    description="DS 백필 파이프라인",
+    tags={"type": "backfill"},
+)
+
 # dag/definitions.py
-from dagster import Definitions, EnvVar, load_assets_from_modules
-from dagster_duckdb import DuckDBResource
-from .resources import PostgresResource
-from . import nps_raw_ingestion, nps_data_processing  # noqa: TID252
-from .jobs import nps_history_job  # ← Job 임포트
-
-all_nps_assets = load_assets_from_modules([nps_raw_ingestion, nps_data_processing])
-
-defs = Definitions(
-    assets=all_nps_assets,
-    jobs=[nps_history_job],  # ← Job 등록
-    resources={
-        "cd_duckdb": DuckDBResource(database="data/cd.duckdb"),
-        "nps_duckdb": DuckDBResource(database="data/nps.duckdb"),
-        "postgres": PostgresResource(
-            host=EnvVar("POSTGRES_HOST"),
-            port=EnvVar.int("POSTGRES_PORT"),
-            user=EnvVar("POSTGRES_USER"),
-            password=EnvVar("POSTGRES_PASSWORD"),
-            database=EnvVar("POSTGRES_DB"),
-        ),
-    ),
-)
-```
-
-### Job 확장 시 예시
-
-새로운 Job을 추가할 때:
-
-```python
-# dag/jobs.py에 추가
-# 복합 도메인 분석 Job
-cross_domain_job = dg.define_asset_job(
-    name="cross_domain_analytics",
-    selection=dg.AssetSelection.tag("data_tier", "gold"),
-    description="모든 Gold 계층 분석 실행",
-    tags={"type": "analytics", "priority": "high"},
+from .jobs import (
+    nps_history_job,
+    cd_history_job,
+    cd_docker_job,
+    cd_node_job,
+    ds_docker_job,
+    ds_node_job,
+    cd_daily_update_job,
+    cd_daily_update_turso_job,
+    is_ingest_job,
+    ss_ingest_job,
+    is_crawler_10min_job,
+    is_crawler_interval_job,
+    ds_backfill_job,
 )
 
-# dag/definitions.py에 등록
-from .jobs import nps_history_job, cross_domain_job  # ← 새 Job 임포트
-
 defs = Definitions(
-    assets=all_nps_assets,
-    jobs=[nps_history_job, cross_domain_job],  # ← 새 Job 추가
-    resources={...},
+    ...,
+    jobs=[
+        nps_history_job,
+        cd_history_job,
+        cd_docker_job,
+        cd_node_job,
+        ds_docker_job,
+        ds_node_job,
+        cd_daily_update_job,
+        cd_daily_update_turso_job,
+        is_ingest_job,
+        ss_ingest_job,
+        is_crawler_10min_job,
+        is_crawler_interval_job,
+        ds_backfill_job,
+    ],
+    ...,
 )
 ```
 
 ### Asset Group Name 설정 (CRITICAL)
 
-Job이 올바르게 Asset을 선택하려면 Asset의 `group_name`이 정확히 설정되어야 함:
+Job이 올바르게 Asset을 선택하려면 Asset의 `group_name`이 정확히 설정되어야 합니다. 현재 프로젝트에서 사용하는 대표적인 그룹명은 다음과 같습니다.
+
+- `CD`, `CD_TURSO`, `CD_HISTORY`
+- `DS`
+- `IS`
+- `SS`, `SS_Dictionary`
+- `NPS`, `NPS_SaaS`
+
+각 Asset은 실제로 해당 그룹 중 하나를 사용하고 있으며, Job의 AssetSelection과 반드시 일치해야 합니다.
 
 ```python
 # nps_raw_ingestion.py
@@ -758,7 +1112,7 @@ Job이 올바르게 Asset을 선택하려면 Asset의 `group_name`이 정확히 
         "source": "national_pension"
     },
 )
-def nps_his_download(...):
+def nps_his_download(context: AssetExecutionContext) -> dg.MaterializeResult:
     pass
 
 # nps_data_processing.py
@@ -773,7 +1127,7 @@ def nps_his_download(...):
     },
     deps=["nps_his_download"]
 )
-def nps_his_digest(...):
+def nps_his_digest(context: AssetExecutionContext) -> dg.MaterializeResult:
     pass
 ```
 
@@ -841,42 +1195,47 @@ print(f"Job success: {result.success}")
 #### 1. 논리적 그룹화
 
 ```python
-# GOOD: 비즈니스 도메인별 그룹화
-nps_targets = dg.AssetSelection.groups("NPS")
-cd_targets = dg.AssetSelection.groups("CD")
+# GOOD: 시드 Asset을 기준으로 downstream 선택
+cd_targets = dg.AssetSelection.assets("cd_stockcode").downstream()
+is_targets = dg.AssetSelection.assets("posts_asset").downstream()
 
-# AVOID: 기술적 분류로만 그룹화
+# AVOID: 태그 기반으로만 선택하면 필요한 자산이 누락될 수 있음
 bronze_only = dg.AssetSelection.tag("data_tier", "bronze")
 ```
 
 #### 2. 명확한 Job 이름 및 설명
 
 ```python
-# GOOD: 목적이 명확한 이름
-nps_history_job = dg.define_asset_job(
-    name="nps_history_job",
-    description="NPS 과거 데이터 한번에 가지고 오기",
+# GOOD: 목적이 명확한 이름과 설명
+cd_daily_update_job = dg.define_asset_job(
+    name="cd_daily_update_job",
+    partitions_def=daily_exchange_category_partition,
+    selection=cd_targets,
+    description="매일 주식 가격 업데이트",
+    tags={"type": "daily_update"},
 )
 
-# AVOID: 모호한 이름
+# AVOID: 모호하거나 목적을 알 수 없는 이름
 data_job = dg.define_asset_job(name="data_job")
 ```
 
 #### 3. 적절한 태그 활용
 
 ```python
-# 운영 환경 구분
-production_job = dg.define_asset_job(
-    name="nps_production_sync",
-    selection=nps_targets,
-    tags={"env": "production", "schedule": "daily"},
+# 운영/모니터링 목적 태그 예시
+is_crawler_10min_job = dg.define_asset_job(
+    name="is_crawler_job_10min",
+    selection=dg.AssetSelection.assets("is_crawler_executor"),
+    description="IS 크롤러 executor 을 매 10분마다 실행",
+    tags={"type": "schedule", "interval": "10min"},
 )
 
-# 데이터 품질 체크 Job
-quality_job = dg.define_asset_job(
-    name="data_quality_checks",
-    selection=dg.AssetSelection.tag("quality_check", "true"),
-    tags={"type": "validation", "critical": "true"},
+# 실시간 로그 수집 태그 예시
+cd_docker_job = dg.define_asset_job(
+    name="cd_docker_job",
+    selection=cd_docker_targets,
+    description="CD 이미지 처리용 도커 컨테이너를 실시간 로그 스트리밍으로 실행",
+    tags={"source": "docker", "type": "realtime"},
 )
 ```
 
@@ -1047,17 +1406,16 @@ The DAG project uses Bronze, Silver, and Gold tags representing **Medallion Arch
 
 **Examples**:
 
-- `nps_raw_business_data` - Raw NPS workplace data
-- `cd_raw_stock_prices` - Raw stock price data
+- `nps_his_download` - Raw NPS workplace history download
+- `cd_prices` - Daily OHLCV ingestion from KRX
 
 ```python
 @dg.asset(
     tags={"data_tier": "bronze", "domain": "pension"},
-    group_name="nps_ingestion"
+    group_name="NPS"
 )
-def nps_raw_business_registrations() -> dg.MaterializeResult:
-    """Collect raw NPS workplace registration data"""
-    # Read CSV files directly without transformation
+def nps_his_download() -> dg.MaterializeResult:
+    """Raw NPS workplace history download"""
     pass
 ```
 
@@ -1074,21 +1432,17 @@ def nps_raw_business_registrations() -> dg.MaterializeResult:
 
 **Examples**:
 
-- `nps_cleaned_business_data` - Cleansed workplace data
-- `cd_processed_stock_prices` - Standardized stock price data
+- `nps_his_digest` - Cleansed and re-encoded NPS history
+- `cd_digest_price` - Standardized daily stock price snapshot
 
 ```python
 @dg.asset(
-    deps=["nps_raw_business_registrations"],
+    deps=["nps_his_download"],
     tags={"data_tier": "silver", "domain": "pension"},
-    group_name="nps_processing"
+    group_name="NPS"
 )
-def nps_cleaned_business_data() -> dg.MaterializeResult:
+def nps_his_digest() -> dg.MaterializeResult:
     """Cleanse and standardize workplace data"""
-    # 1. Standardize column names
-    # 2. Convert data types
-    # 3. Handle null values
-    # 4. Remove duplicates
     pass
 ```
 
@@ -1105,22 +1459,18 @@ def nps_cleaned_business_data() -> dg.MaterializeResult:
 
 **Examples**:
 
-- `nps_business_analytics` - Workplace analysis metrics
-- `cd_stock_analytics` - Stock investment analysis
-- `combined_financial_insights` - Integrated financial insights
+- `nps_his_postgres_append` - Warehouse sync of cleansed NPS data
+- `cd_populate_security_ranks` - Stock ranking analytics
+- `nps_pension_staging_indexes` - SaaS 인덱스/함수 생성 및 최적화
 
 ```python
 @dg.asset(
-    deps=["nps_cleaned_business_data", "cd_processed_stock_prices"],
-    tags={"data_tier": "gold", "domain": "analytics"},
-    group_name="cross_domain_analytics"
+    deps=["nps_his_digest"],
+    tags={"data_tier": "gold", "domain": "pension"},
+    group_name="NPS"
 )
-def combined_financial_insights() -> dg.MaterializeResult:
-    """Combine NPS and stock data for financial insights"""
-    # 1. Integrate multiple data sources
-    # 2. Apply complex business logic
-    # 3. Calculate analytical metrics
-    # 4. Generate dashboard-ready data
+def nps_his_postgres_append() -> dg.MaterializeResult:
+    """Append cleansed data into Postgres"""
     pass
 ```
 
@@ -1129,21 +1479,21 @@ def combined_financial_insights() -> dg.MaterializeResult:
 #### NPS Project Data Pipeline:
 
 ```
-nps_raw_business_data (Bronze)
+nps_his_download (Bronze)
     ↓ data cleansing
-nps_cleaned_business_data (Silver)
-    ↓ business logic application
-nps_business_analytics (Gold)
+nps_his_digest (Silver)
+    ↓ warehouse load
+nps_his_postgres_append (Gold)
 ```
 
 #### CD Project Data Pipeline:
 
 ```
-cd_raw_stock_prices (Bronze)
+cd_prices (Bronze)
     ↓ data standardization
-cd_processed_stock_prices (Silver)
-    ↓ investment analysis logic
-cd_investment_insights (Gold)
+cd_digest_price (Silver)
+    ↓ analytics enrichment
+cd_populate_security_ranks (Gold)
 ```
 
 ### Tag Usage Guidelines
@@ -1882,7 +2232,12 @@ python -c "from dag.definitions import defs; print(f'Asset checks: {len(defs.ass
 # Test module imports work correctly
 python -c "
 try:
-    from dag import nps_raw_ingestion, nps_data_processing, nps_postgres_integration
+    from dag import (
+        nps_raw_ingestion,
+        nps_data_processing,
+        nps_postgres_simple,
+        nps_index_optimization,
+    )
     print('✅ 모든 모듈 임포트 성공')
 except ImportError as e:
     print(f'❌ 임포트 에러: {e}')
