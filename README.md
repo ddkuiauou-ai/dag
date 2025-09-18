@@ -22,6 +22,7 @@
 - `docs/ds.md`: DS 프로젝트 상세 명세
 - `docs/is.md`: IS 프로젝트 상세 명세
 - `docs/coding.md`: 코드 스타일 및 공통 가이드
+- `AGENTS.md`: 리포지토리 공통 기여 가이드라인
 
 ### 1.3 Dagster 구성 스냅샷
 
