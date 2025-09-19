@@ -60,7 +60,8 @@ def sql_quote(value):
     elif isinstance(value, (datetime.date, datetime.datetime)):
         return f"'{value.strftime('%Y-%m-%d')}'" # Standard date format
     else:
-        return f"'{str(value).replace("'", "''")}'"
+        escaped_value = str(value).replace("'", "''")
+        return f"'{escaped_value}'"
 
 
 @dg.asset(

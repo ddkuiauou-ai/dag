@@ -25,7 +25,8 @@ def sql_quote(value):
         return str(value)
     else:
         # Correctly escape single quotes for SQL
-        return f"'{str(value).replace("'", "''")}'"
+        escaped_value = str(value).replace("'", "''")
+        return f"'{escaped_value}'"
 
 
 @dg.asset(
