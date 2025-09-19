@@ -281,7 +281,7 @@ defs = Definitions(
         ),
         "gemini": OpenAIResource(
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key="AIzaSyD50H5babYxOodY-saVsGOk-1hS3Oo--Dw",
+            api_key=EnvVar("GEMINI_API_KEY"),
         ),
     },
 )

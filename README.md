@@ -138,5 +138,24 @@ for group in ['CD', 'DS', 'SS', 'NPS', 'IS']:
     print()
 "
 ```
+### 실제 운영
+
+export DAGSTER_HOME=/Users/gildong/silla/dag/DAGSTER_HOME
+dagster-webserver -h 0.0.0.0 -p 3000
+dagster-daemon run
+
+pip install uv
+uv pip install . 
+# 현재 pyproject.toml에 정의된 의존성을 해석해서 락 생성
+uv pip compile pyproject.toml -o requirements.lock.txt
+
+# 락 파일에 맞춰 환경 동기화 (매우 빠름)
+uv pip sync requirements.lock.txt
+
+# 최신 버전으로 전부 올리고 싶으면
+uv pip compile --upgrade pyproject.toml -o requirements.lock.txt
+uv pip sync requirements.lock.txt
+
 
 이 명령은 `definitions.py`에 등록된 그룹별 에셋을 나열하여 파이프라인 구성을 빠르게 점검할 수 있습니다.【F:dag/dag/definitions.py†L82-L195】
+
