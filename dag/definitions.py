@@ -228,13 +228,13 @@ defs = Definitions(
             user=EnvVar("CD_POSTGRES_USER"),
             password=EnvVar("CD_POSTGRES_PASSWORD"),
             database=EnvVar("CD_POSTGRES_DB"),
-        ),
-        "ds_postgres": PostgresResource(
-            host=EnvVar("DS_POSTGRES_HOST"),
-            port=EnvVar.int("DS_POSTGRES_PORT"),
-            user=EnvVar("DS_POSTGRES_USER"),
-            password=EnvVar("DS_POSTGRES_PASSWORD"),
-            database=EnvVar("DS_POSTGRES_DB"),
+        ),        
+        "is_postgres": PostgresResource(
+            host=EnvVar("IS_POSTGRES_HOST"),
+            port=EnvVar.int("IS_POSTGRES_PORT"),
+            user=EnvVar("IS_POSTGRES_USER"),
+            password=EnvVar("IS_POSTGRES_PASSWORD"),
+            database=EnvVar("IS_POSTGRES_DB"),
         ),
         "nps_postgres": PostgresResource(
             host=EnvVar("NPS_POSTGRES_HOST"),
@@ -243,12 +243,19 @@ defs = Definitions(
             password=EnvVar("NPS_POSTGRES_PASSWORD"),
             database=EnvVar("NPS_POSTGRES_DB"),
         ),
-        "is_postgres": PostgresResource(
-            host=EnvVar("IS_POSTGRES_HOST"),
-            port=EnvVar.int("IS_POSTGRES_PORT"),
-            user=EnvVar("IS_POSTGRES_USER"),
-            password=EnvVar("IS_POSTGRES_PASSWORD"),
-            database=EnvVar("IS_POSTGRES_DB"),
+        "ss_postgres": PostgresResource(
+            host=EnvVar("SS_POSTGRES_HOST"),
+            port=EnvVar.int("SS_POSTGRES_PORT"),
+            user=EnvVar("SS_POSTGRES_USER"),
+            password=EnvVar("SS_POSTGRES_PASSWORD"),
+            database=EnvVar("SS_POSTGRES_DB"),
+        ),
+        "ds_postgres": PostgresResource(
+            host=EnvVar("DS_POSTGRES_HOST"),
+            port=EnvVar.int("DS_POSTGRES_PORT"),
+            user=EnvVar("DS_POSTGRES_USER"),
+            password=EnvVar("DS_POSTGRES_PASSWORD"),
+            database=EnvVar("DS_POSTGRES_DB"),
         ),
         # Turso (libsql) connection
         "cd_turso": TursoResource(
