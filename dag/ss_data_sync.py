@@ -199,7 +199,7 @@ def _load_dictionary_patterns_cached(carriers_key: str = "__v1__") -> Tuple[_Dic
     """LRU-cached loader. Key param allows invalidation if needed."""
     raise RuntimeError("This function must be called with a DB connection via _load_dictionary_patterns(context, is_postgres)")
 
-def _load_dictionary_patterns(context: dg.AssetExecutionContext, is_postgres: PostgresResource) -> Tuple[_DictPatterns, _DictPatterns]:
+def _load_dictionary_patterns(context: dg.AssetExecutionContext, ss_postgres: PostgresResource) -> Tuple[_DictPatterns, _DictPatterns]:
     # Use cached value if available
     try:
         carriers_pat, models_pat = _load_dictionary_patterns_cached()
@@ -528,7 +528,7 @@ def ss_raw_posts(context: dg.AssetExecutionContext):
     automation_condition=EAGER,
     description="필요한 테이블/인덱스/뷰 생성 (idempotent)"
 )
-def ss_bootstrap_schema(context: dg.AssetExecutionContext, is_postgres: PostgresResource):
+def ss_bootstrap_schema(context: dg.AssetExecutionContext, ss_postgres: PostgresResource):
     ddl = [
         # === Drop existing objects for clean slate ===
         "DROP VIEW IF EXISTS api_reports_daily_latest_json CASCADE;",
@@ -747,7 +747,7 @@ def _extract_source_posted_at(p: dict) -> Optional[str]:
     automation_condition=EAGER,
     description="DANGER: SS 관련 테이블을 모두 비웁니다(TRUNCATE ... RESTART IDENTITY). SS_DANGEROUS_FLUSH=1 환경변수 필요."
 )
-def ss_flush_all(context: dg.AssetExecutionContext, is_postgres: PostgresResource):
+def ss_flush_all(context: dg.AssetExecutionContext, ss_postgres: PostgresResource):
     """Dangerous flush for SS project tables.
 
     Behavior
@@ -1209,7 +1209,7 @@ def _dedupe_by_hash(rows: List[tuple]) -> List[tuple]:
     deps=[ss_bootstrap_schema, "ss_extracted_llm"],
     description="LLM 파이프라인을 통과한 최종 Deal 후보군을 deals 테이블에 UPSERT 합니다."
 )
-def ss_deals_upsert(context: dg.AssetExecutionContext, is_postgres: PostgresResource, ss_extracted_llm: List[dict]):
+def ss_deals_upsert(context: dg.AssetExecutionContext, ss_postgres: PostgresResource, ss_extracted_llm: List[dict]):
     total_candidates = len(ss_extracted_llm or [])
     good_rows, quarantine_rows, duplicate_report = _gate_and_build_rows(ss_extracted_llm)
     good_rows = _dedupe_by_hash(good_rows)
@@ -1320,7 +1320,7 @@ def ss_deals_upsert(context: dg.AssetExecutionContext, is_postgres: PostgresReso
     deps=[ss_bootstrap_schema, ss_deals_upsert],
     description="모델/용량별 7일 롤링 min/median/max/n 계산 및 저장"
 )
-def ss_aggregates_daily(context: dg.AssetExecutionContext, is_postgres: PostgresResource):
+def ss_aggregates_daily(context: dg.AssetExecutionContext, ss_postgres: PostgresResource):
     sql = """
     WITH recent AS (
       SELECT *

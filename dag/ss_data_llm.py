@@ -122,7 +122,7 @@ def _build_system_suffix(allowed_carriers: List[str], allowed_models: List[str])
     parts.append("\n[강화 규칙]\n- 'carrier'와 'model'은 반드시 위 목록에서 정확히 일치하는 문자열로만 기입합니다. 목록에 없거나 불명확하면 null. 별칭/임의 값 금지.")
     return "\n".join(parts)
 
-def _load_allowed_lists(context: dg.AssetExecutionContext, is_postgres: PostgresResource) -> Tuple[List[str], List[str]]:
+def _load_allowed_lists(context: dg.AssetExecutionContext, ss_postgres: PostgresResource) -> Tuple[List[str], List[str]]:
     allowed_carriers: List[str] = []
     allowed_models: List[str] = []
     try:

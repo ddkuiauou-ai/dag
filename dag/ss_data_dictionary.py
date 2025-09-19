@@ -159,7 +159,7 @@ def _prepare_seed_rows(mapping: Dict[str, List[str]]) -> List[Tuple[str, Json, J
     description="통신사 및 모델 사전을 위한 테이블/인덱스를 초기화(드롭 후 재생성)합니다. (파괴적 작업)",
 )
 def ss_bootstrap_dictionary_schema(
-    context: dg.AssetExecutionContext, is_postgres: PostgresResource
+    context: dg.AssetExecutionContext, ss_postgres: PostgresResource
 ):
     """Idempotently ensures the required tables and indexes exist."""
 
@@ -226,7 +226,7 @@ def ss_bootstrap_dictionary_schema(
     description="통신사 및 모델 사전에 초기/갱신 데이터를 업서트합니다.",
 )
 def ss_seed_dictionary_data(
-    context: dg.AssetExecutionContext, is_postgres: PostgresResource
+    context: dg.AssetExecutionContext, ss_postgres: PostgresResource
 ):
     """Seed (insert or update) carriers and phone models in one transaction.
 
@@ -237,7 +237,7 @@ def ss_seed_dictionary_data(
     carrier_rows = _prepare_seed_rows(CARRIERS)
     model_rows = _prepare_seed_rows(MODELS)
 
-    with is_postgres.get_connection() as conn:
+    with ss_postgres.get_connection() as conn:
         with conn.cursor() as cur:
             # Seed carriers
             execute_values(
