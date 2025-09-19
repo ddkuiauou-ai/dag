@@ -169,9 +169,11 @@ def ds_img_r2_node(
     except Exception as e:
         context.log.error(f"❌ DS 이미지 처리 Node.js 스크립트 실행 중 예상치 못한 오류: {e}")
         if full_stdout_log:
-            context.log.error(f"Captured STDOUT so far (DS): {('\n'.join(full_stdout_log))[-1000:]}")
+            stdout_excerpt = "\n".join(full_stdout_log)[-1000:]
+            context.log.error(f"Captured STDOUT so far (DS): {stdout_excerpt}")
         if full_stderr_log:
-            context.log.error(f"Captured STDERR so far (DS): {('\n'.join(full_stderr_log))[-1000:]}")
+            stderr_excerpt = "\n".join(full_stderr_log)[-1000:]
+            context.log.error(f"Captured STDERR so far (DS): {stderr_excerpt}")
         raise
     finally:
         if process:
