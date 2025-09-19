@@ -25,7 +25,8 @@ def sql_quote(value):
     elif isinstance(value, (int, float, bool)):
         return str(value)
     else:
-        return f"'{str(value).replace("'", "''")}'"
+        escaped_value = str(value).replace("'", "''")
+        return f"'{escaped_value}'"
 
 
 @dg.asset(
