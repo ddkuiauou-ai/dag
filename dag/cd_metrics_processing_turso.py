@@ -24,7 +24,8 @@ def sql_quote(value):
         return f"'{value.strftime('%Y-%m-%d')}'"
     else:
         # Escape single quotes for SQL strings
-        return f"'{str(value).replace("'", "''")}'"
+        escaped_value = str(value).replace("'", "''")
+        return f"'{escaped_value}'"
 
 
 @dg.asset(

@@ -25,7 +25,8 @@ def sql_quote(value):
     elif isinstance(value, (int, float, bool)):
         return str(value)
     else:
-        return f"'{str(value).replace("'", "''")}'"
+        escaped_value = str(value).replace("'", "''")
+        return f"'{escaped_value}'"
 
 
 @dg.asset(
@@ -313,7 +314,26 @@ def cd_sync_marketcaps_to_security_turso(
                 key = (ticker, ex_val)
                 if key in securities_map:
                     sec = securities_map[key]
-                    update_stmt = f"UPDATE marketcap SET security_id = {sql_quote(sec["security_id"])}, name = {sql_quote(sec["name"])}, kor_name = {sql_quote(sec["kor_name"])} WHERE ticker = {sql_quote(ticker)} AND exchange = {sql_quote(ex_val)} AND date = {sql_quote(date_iso)};"
+
+                    security_id_sql = sql_quote(sec["security_id"])
+                    name_sql = sql_quote(sec["name"])
+                    kor_name_sql = sql_quote(sec["kor_name"])
+                    ticker_sql = sql_quote(ticker)
+                    exchange_sql = sql_quote(ex_val)
+                    date_sql = sql_quote(date_iso)
+
+                    update_stmt = (
+                        "UPDATE marketcap SET security_id = {security_id}, name = {name}, "
+                        "kor_name = {kor_name} WHERE ticker = {ticker} AND exchange = {exchange} "
+                        "AND date = {date};"
+                    ).format(
+                        security_id=security_id_sql,
+                        name=name_sql,
+                        kor_name=kor_name_sql,
+                        ticker=ticker_sql,
+                        exchange=exchange_sql,
+                        date=date_sql,
+                    )
                     update_statements.append(update_stmt)
                     metadata_rows_for_odf.append(
                         [date_iso, ticker, ex_val, sec["security_id"], sec["name"], cnt]

@@ -203,9 +203,11 @@ def cd_img_r2_node(
                 context.log.error(f"Remaining STDERR: {stderr_remains}")
         # 또는 full_stdout_log / full_stderr_log 사용
         if full_stdout_log:
-            context.log.error(f"Captured STDOUT so far: {('\n'.join(full_stdout_log))[-1000:]}")
+            stdout_excerpt = "\n".join(full_stdout_log)[-1000:]
+            context.log.error(f"Captured STDOUT so far: {stdout_excerpt}")
         if full_stderr_log:
-            context.log.error(f"Captured STDERR so far: {('\n'.join(full_stderr_log))[-1000:]}")
+            stderr_excerpt = "\n".join(full_stderr_log)[-1000:]
+            context.log.error(f"Captured STDERR so far: {stderr_excerpt}")
         raise
     finally:
         if process: # Ensure pipes are closed and process is reaped
