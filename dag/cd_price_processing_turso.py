@@ -15,7 +15,8 @@ def sql_quote(value):
     """ 작은따옴표를 SQL 문자열에 맞게 이스케이프합니다. """
     if value is None:
         return "NULL"
-    return f"'{str(value).replace("'", "''")}'"
+    escaped_value = str(value).replace("'", "''")
+    return f"'{escaped_value}'"
 
 def _cursor_to_list_of_dicts(cursor):
     """Converts a database cursor result to a list of dictionaries."""
