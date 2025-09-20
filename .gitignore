@@ -141,3 +141,5 @@ dag/is_crawlee/*/output/*.json
 dag/ss_crawlee/*/output/*.json
 .env.dev
 .env.prod
+
+/DAGSTER_HOME/*

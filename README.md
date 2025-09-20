@@ -139,9 +139,11 @@ for group in ['CD', 'DS', 'SS', 'NPS', 'IS']:
 "
 ```
 ### 실제 운영
+python -m venv .venv && source .venv/bin/activate
+conda deactivate
 
 export DAGSTER_HOME=/Users/gildong/silla/dag/DAGSTER_HOME
-dagster-webserver -h 0.0.0.0 -p 3000
+dagster-webserver -h 0.0.0.0 -p 6006
 dagster-daemon run
 
 pip install uv
@@ -156,6 +158,38 @@ uv pip sync requirements.lock.txt
 uv pip compile --upgrade pyproject.toml -o requirements.lock.txt
 uv pip sync requirements.lock.txt
 
-
 이 명령은 `definitions.py`에 등록된 그룹별 에셋을 나열하여 파이프라인 구성을 빠르게 점검할 수 있습니다.【F:dag/dag/definitions.py†L82-L195】
 
+systemd 단위 파일(예시)
+
+/etc/systemd/system/dagster-webserver.service
+
+[Unit]
+Description=Dagster Webserver
+After=network-online.target
+[Service]
+User=dagster
+Environment=DAGSTER_HOME=/opt/dagster/home
+WorkingDirectory=/opt/app
+ExecStart=/opt/app/.venv/bin/dagster-webserver -h 0.0.0.0 -p 3000 -w /opt/app/workspace.yaml
+Restart=always
+[Install]
+WantedBy=multi-user.target
+
+
+/etc/systemd/system/dagster-daemon.service
+
+[Unit]
+Description=Dagster Daemon
+After=dagster-webserver.service
+[Service]
+User=dagster
+Environment=DAGSTER_HOME=/opt/dagster/home
+WorkingDirectory=/opt/app
+ExecStart=/opt/app/.venv/bin/dagster-daemon run
+Restart=always
+[Install]
+WantedBy=multi-user.target
+
+
+적용: systemctl daemon-reload && systemctl enable --now dagster-webserver dagster-daemon

@@ -1,9 +1,7 @@
 from datetime import datetime, timedelta
+from cd_constants import DAYS
 
 import dagster as dg
-
-DAYS = 42
-# DAYS = 5
 
 # START_DATE = "2023-01-01"
 START_DATE = datetime.today() - timedelta(days=DAYS)

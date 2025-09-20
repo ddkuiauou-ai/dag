@@ -12,12 +12,7 @@ from pykrx import stock as krx
 
 from .cd_constants import DATE_FORMAT, EXCHANGES, get_today, get_today_date
 from .resources import PostgresResource
-
-DAYS = 42
-BEFORE_YEARS = 20
-KONEX_START_DATE = "20130701"
-BATCH_SIZE = 1000000
-
+from cd_constants import DAYS, BEFORE_YEARS, KONEX_START_DATE, BATCH_SIZE
 
 def _adjust_to_business_day(day: date, holidays: set) -> date:
     """

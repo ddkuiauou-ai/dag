@@ -3,6 +3,7 @@ import json
 import time
 from datetime import date, datetime, timedelta
 from urllib import parse
+from cd_constants import DAYS
 
 import dagster as dg
 import pandas as pd
@@ -13,7 +14,6 @@ from pykrx import stock as krx
 from .cd_constants import DATE_FORMAT, EXCHANGES, get_today, get_today_date
 from .resources import PostgresResource
 
-DAYS = 42
 BATCH_SIZE = 1000000 # Used in digest_historical_prices
 
 # Helper functions (will be used by other historical files too)

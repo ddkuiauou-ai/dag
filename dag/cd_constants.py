@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import List, Tuple, Any, Callable, Optional
 
-DAYS = 42
-BEFORE_YEARS = 20
+DAYS = 90
+BEFORE_YEARS = 30
 KONEX_START_DATE = "20130701"
 BATCH_SIZE = 1000000
 
