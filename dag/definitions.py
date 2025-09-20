@@ -266,12 +266,12 @@ defs = Definitions(
         "openai": OpenAIResource(
             # base_url="http://192.168.50.12:11434/v1",  # Local Ollama API
             # base_url="http://192.168.50.124:1234/v1",  # q550
-            # base_url="http://192.168.50.12:1234/v1",  # omen
-            base_url="http://192.168.50.204:1234/v1",  # mac pro
+            base_url="http://192.168.50.12:1234/v1",  # omen
+            # base_url="http://192.168.50.204:1234/v1",  # mac pro
             api_key="ollama",
         ),
         "omen": OpenAIResource(
-            base_url="http://192.168.50.12:1234/v1",  # mac pro
+            base_url="http://192.168.50.12:1234/v1",  # omen
             api_key="ollama",
         ),
         "oss": OpenAIResource(
@@ -283,7 +283,8 @@ defs = Definitions(
         "qwen25": OpenAIResource(
             # base_url="http://192.168.50.12:1234/v1",  # omen
             # base_url="http://192.168.50.107:11434/v1",  # 3080ti
-            base_url="http://192.168.50.107:1234/v1",  # 3080ti
+            # base_url="http://192.168.50.107:1234/v1",  # 3080ti
+            base_url="http://192.168.50.204:1234/v1",  # mac pro
             api_key="qwen",
         ),
         "gemini": OpenAIResource(
