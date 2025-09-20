@@ -3,7 +3,6 @@ import json
 import time
 from datetime import date, datetime, timedelta
 from urllib import parse
-from cd_constants import DAYS
 
 import dagster as dg
 import pandas as pd
@@ -11,10 +10,8 @@ import requests
 from dagster_duckdb import DuckDBResource
 from pykrx import stock as krx
 
-from .cd_constants import DATE_FORMAT, EXCHANGES, get_today, get_today_date
+from .cd_constants import DAYS, BATCH_SIZE, DATE_FORMAT, EXCHANGES, get_today, get_today_date
 from .resources import PostgresResource
-
-BATCH_SIZE = 1000000 # Used in digest_historical_prices
 
 # Helper functions (will be used by other historical files too)
 def _adjust_to_business_day(day: date, holidays: set) -> date:

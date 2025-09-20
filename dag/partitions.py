@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from cd_constants import DAYS
+from .cd_constants import DAYS
 
 import dagster as dg
 

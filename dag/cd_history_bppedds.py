@@ -10,13 +10,10 @@ import requests
 from dagster_duckdb import DuckDBResource
 from pykrx import stock as krx
 
-from .cd_constants import DATE_FORMAT, EXCHANGES, get_today, get_today_date, KONEX_START_DATE
+from .cd_constants import BEFORE_YEARS, BATCH_SIZE, DATE_FORMAT, EXCHANGES, get_today, get_today_date, KONEX_START_DATE
 from .resources import PostgresResource
 # Import shared helper functions from cd_history_prices
 from .cd_history_prices import _adjust_to_business_day, _getHoliday, _get_valid_days
-
-BEFORE_YEARS = 20 # Specific to bppedds historical fetch
-BATCH_SIZE = 1000000 # Used in digest_historical_bppedds
 
 @dg.asset(
     kinds={"source", "duckdb"},
